@@ -1,4 +1,5 @@
-import           Data.Char        (isLower)
+import           Control.Parallel.Strategies
+import           Data.Char        (isLower, toLower)
 import           Data.Set         (Set)
 import qualified Data.Set    as S
 import           Data.Vector      ((!), Vector)
@@ -18,20 +19,22 @@ data Search =
 input :: Grid Char
 input = V.fromList
       . map V.fromList
-      $ [ "#########"
-        , "#b.A.@.a#"
-        , "#########" ]
+      $ [ "########################"
+        , "#...............b.C.D.f#"
+        , "#.######################"
+        , "#.....@.a.B.c.d.A.e.F.g#"
+        , "########################" ]
 
 newSearch :: Coord -> Set Char -> Search
 newSearch start gridKeys =
     Search { visited = S.singleton start
-           , keys    = S.fromList "@.#"
-           , allKeys = S.fromList "@.#" <> gridKeys
+           , keys    = S.fromList "@."
+           , allKeys = S.fromList "@." <> gridKeys
            , cost    = 0
            }
 
-steps :: Search -> Grid Char -> Coord -> [Coord]
-steps search grid (Coord row col) =
+steps :: Grid Char -> Coord -> [Coord]
+steps grid (Coord row col) =
     left ++ right ++ up ++ down
     where
     left  | col > 0   = [Coord row (col-1)]
@@ -46,13 +49,12 @@ steps search grid (Coord row col) =
 isAccessible :: Search -> Grid Char -> Coord -> Bool
 isAccessible search grid coord@(Coord row col) =
     and [ notVisited
-        , haveKey || isKey
-        ]
+        , haveKey || isKey ]
 
     where
     notVisited = not (S.member coord (visited search))
 
-    haveKey = grid ! row ! col `S.member` keys search
+    haveKey = toLower (grid ! row ! col) `S.member` keys search
 
     isKey = isLower (grid ! row ! col)
 
@@ -79,22 +81,42 @@ findInGrid p grid =
           $ grid
     in fst $ x ! 0 ! 0
 
-move :: Search -> Grid Char -> Coord -> Search
-move search grid (Coord row col) = search
-
 main :: IO ()
 main = do
+
+    -- input <- V.fromList . map V.fromList . lines <$> readFile "./day18_input"
 
     let start = findInGrid (=='@') input
 
     let search = newSearch start (getKeys input)
 
-    --print $ filter (isAccessible search input)
-    --      . steps search input
-    --      $ start
+    print $ go search input $ start
 
-    go search input start
+go :: Search -> Grid Char -> Coord -> Int
+go search grid coord@(Coord row col) = do
 
-go search grid start = do
+    let search' = updateKeys
+                . updateVisited
+                $ search
 
-    print search
+    if success search'
+        then cost search'
+        else case filter (isAccessible search' grid) . steps grid $ coord of
+            [] -> 100000
+            cs -> let search'' = search' {cost = cost search' + 1}
+                  in minimum . parMap rpar (go search'' grid) $ cs
+
+    where
+    updateKeys search =
+        let cell = grid ! row ! col
+        in if isLower cell && not (cell `S.member` keys search)
+               then search { keys    = S.insert cell (keys search)
+                           , visited = S.singleton coord
+                           }
+               else search
+
+    updateVisited search =
+        search { visited = S.insert coord (visited search) }
+
+    success search =
+        keys search == allKeys search
