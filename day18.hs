@@ -1,3 +1,5 @@
+import           Data.Set         (Set)
+import qualified Data.Set    as S
 import           Data.Vector      ((!), Vector)
 import qualified Data.Vector as V
 
@@ -5,12 +7,20 @@ data Coord = Coord Int Int deriving Show
 
 type Grid a = Vector (Vector a)
 
+data Search =
+    Search { visited :: Set Coord
+           , keys    :: Set Char
+           }
+
 input :: Grid Char
 input = V.fromList
       . map V.fromList
       $ [ "#########"
         , "#b.A.@.a#"
         , "#########" ]
+
+steps :: Search -> Grid Char -> Coord -> [Coord]
+steps = undefined
 
 coordinateGrid :: Vector (Vector a) -> Vector (Vector (Coord, a))
 coordinateGrid =
