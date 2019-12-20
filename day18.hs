@@ -1,20 +1,27 @@
-import           Control.Parallel.Strategies
+import AStar
+
+import           Control.Monad.Identity
 import           Data.Char        (isLower, toLower)
 import           Data.Set         (Set)
 import qualified Data.Set    as S
 import           Data.Vector      ((!), Vector)
 import qualified Data.Vector as V
 
+
 data Coord = Coord Int Int deriving (Eq, Ord, Show)
 
-type Grid a = Vector (Vector a)
+
+{-
+
 
 data Search =
     Search { visited :: Set Coord
            , keys    :: Set Char
            , allKeys :: Set Char
            , cost    :: Int
-           } deriving Show
+           } deriving Show -}
+
+type Grid a = Vector (Vector a)
 
 input :: Grid Char
 input = V.fromList
@@ -25,47 +32,54 @@ input = V.fromList
         , "#.....@.a.B.c.d.A.e.F.g#"
         , "########################" ]
 
-newSearch :: Coord -> Set Char -> Search
-newSearch start gridKeys =
-    Search { visited = S.singleton start
-           , keys    = S.fromList "@."
-           , allKeys = S.fromList "@." <> gridKeys
-           , cost    = 0
-           }
+data Cost = Cost Int
+          | Forbidden
+              deriving (Eq, Ord)
 
-steps :: Grid Char -> Coord -> [Coord]
-steps grid (Coord row col) =
-    left ++ right ++ up ++ down
-    where
-    left  | col > 0   = [Coord row (col-1)]
-          | otherwise = []
-    right | col < V.length (grid ! 0) - 1 = [Coord row (col+1)]
-          | otherwise = []
-    up    | row > 0   = [Coord (row-1) col]
-          | otherwise = []
-    down  | row < V.length grid - 1 = [Coord (row+1) col]
-          | otherwise = []
+instance Semigroup Cost where
+    _ <> Forbidden   = Forbidden
+    Forbidden <> _   = Forbidden
+    Cost a <> Cost b = Cost (a + b)
 
-isAccessible :: Search -> Grid Char -> Coord -> Bool
-isAccessible search grid coord@(Coord row col) =
-    and [ notVisited
-        , haveKey || isKey ]
+instance Monoid Cost where
+    mempty = Cost 0
 
-    where
-    notVisited = not (S.member coord (visited search))
+heur :: Coord -> Goal Coord -> Cost
+heur (Coord x1 y1) (Goal (Coord x2 y2)) =
+    Cost $ abs (x2 - x1) + abs (y2 - y1)
 
-    haveKey = toLower (grid ! row ! col) `S.member` keys search
+solver :: Start Coord -> Goal Coord -> Solver Identity Coord Cost
+solver start goal = Solver { getStart  = start
+                           , getGoal   = goal
+                           , heuristic = heur
+                           , expand    = expan
+                           }
 
-    isKey = isLower (grid ! row ! col)
+expan :: Cost -> Coord -> Identity [(Coord, Cost)]
+expan cost (Coord row col) =
+    pure [ (Coord (row + 1) col, Cost 1)
+         , (Coord (row - 1) col, Cost 1)
+         , (Coord row (col + 1), Cost 1)
+         , (Coord row (col - 1), Cost 1)
+         ] -- TODO
 
-getKeys :: Vector (Vector Char) -> Set Char
-getKeys grid = S.fromList
-             . filter isLower
-             . concat
-             . V.toList
-             . V.map V.toList
-             $ grid
+main :: IO ()
+main = do
 
+    -- input <- V.fromList . map V.fromList . lines <$> readFile "./day18_input"
+
+    let start = Start $ findInGrid (=='@') input
+        goal  = Goal  $ findInGrid (=='D') input
+
+    --let search = newSearch start (getKeys input)
+
+    --print $ go search input $ start
+
+    let x = astar (solver start goal)
+
+    print x
+
+    pure ()
 
 coordinateGrid :: Vector (Vector a) -> Vector (Vector (Coord, a))
 coordinateGrid =
@@ -81,16 +95,53 @@ findInGrid p grid =
           $ grid
     in fst $ x ! 0 ! 0
 
-main :: IO ()
-main = do
+{-
+steps :: Grid Char -> Coord -> [Coord]
+steps grid (Coord row col) =
+    left ++ right ++ up ++ down
+    where
+    left  | col > 0   = [Coord row (col-1)]
+            | otherwise = []
+    right | col < V.length (grid ! 0) - 1 = [Coord row (col+1)]
+            | otherwise = []
+    up    | row > 0   = [Coord (row-1) col]
+            | otherwise = []
+    down  | row < V.length grid - 1 = [Coord (row+1) col]
+            | otherwise = []
 
-    -- input <- V.fromList . map V.fromList . lines <$> readFile "./day18_input"
+isAccessible :: Search -> Grid Char -> Coord -> Bool
+isAccessible search grid coord@(Coord row col) =
+    and [ notVisited
+        , haveKey || isKey ]
 
-    let start = findInGrid (=='@') input
+    where
+    notVisited = not (S.member coord (visited search))
 
-    let search = newSearch start (getKeys input)
+    haveKey = toLower (grid ! row ! col) `S.member` keys search
 
-    print $ go search input $ start
+    isKey = isLower (grid ! row ! col)
+
+
+newSearch :: Coord -> Set Char -> Search
+newSearch start gridKeys =
+    Search { visited = S.singleton start
+           , keys    = S.fromList "@."
+           , allKeys = S.fromList "@." <> gridKeys
+           , cost    = 0
+           }
+
+getKeys :: Vector (Vector Char) -> Set Char
+getKeys grid = S.fromList
+             . filter isLower
+             . concat
+             . V.toList
+             . V.map V.toList
+             $ grid
+
+
+
+
+
 
 go :: Search -> Grid Char -> Coord -> Int
 go search grid coord@(Coord row col) = do
@@ -104,7 +155,7 @@ go search grid coord@(Coord row col) = do
         else case filter (isAccessible search' grid) . steps grid $ coord of
             [] -> 100000
             cs -> let search'' = search' {cost = cost search' + 1}
-                  in minimum . parMap rpar (go search'' grid) $ cs
+                  in minimum . map (go search'' grid) $ cs
 
     where
     updateKeys search =
@@ -120,3 +171,5 @@ go search grid coord@(Coord row col) = do
 
     success search =
         keys search == allKeys search
+
+-}
