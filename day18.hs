@@ -1,27 +1,29 @@
 import AStar
 
-import           Control.Monad.Identity
-import           Data.Char        (isLower, toLower)
-import           Data.Set         (Set)
+import           Control.Parallel.Strategies 
+import           Control.Monad.Identity (Identity (Identity))
+import           Data.Char              (isLower, toLower)
+import           Data.List              (permutations)
+import           Data.Set               (Set)
 import qualified Data.Set    as S
-import           Data.Vector      ((!), Vector)
+import           Data.Vector            ((!), Vector)
 import qualified Data.Vector as V
-
 
 data Coord = Coord Int Int deriving (Eq, Ord, Show)
 
-
-{-
-
-
-data Search =
-    Search { visited :: Set Coord
-           , keys    :: Set Char
-           , allKeys :: Set Char
-           , cost    :: Int
-           } deriving Show -}
-
 type Grid a = Vector (Vector a)
+
+data Cost = Cost Int
+          | Forbidden
+              deriving (Eq, Ord, Show)
+
+instance Semigroup Cost where
+    _ <> Forbidden   = Forbidden
+    Forbidden <> _   = Forbidden
+    Cost a <> Cost b = Cost (a + b)
+
+instance Monoid Cost where
+    mempty = Cost 0
 
 input :: Grid Char
 input = V.fromList
@@ -32,52 +34,73 @@ input = V.fromList
         , "#.....@.a.B.c.d.A.e.F.g#"
         , "########################" ]
 
-data Cost = Cost Int
-          | Forbidden
-              deriving (Eq, Ord)
-
-instance Semigroup Cost where
-    _ <> Forbidden   = Forbidden
-    Forbidden <> _   = Forbidden
-    Cost a <> Cost b = Cost (a + b)
-
-instance Monoid Cost where
-    mempty = Cost 0
-
 heur :: Coord -> Goal Coord -> Cost
 heur (Coord x1 y1) (Goal (Coord x2 y2)) =
     Cost $ abs (x2 - x1) + abs (y2 - y1)
 
-solver :: Start Coord -> Goal Coord -> Solver Identity Coord Cost
-solver start goal = Solver { getStart  = start
-                           , getGoal   = goal
-                           , heuristic = heur
-                           , expand    = expan
-                           }
+solver :: KeySet -> Grid Char -> Start Coord -> Goal Coord -> Solver Identity Coord Cost
+solver keyset grid start goal =
+    Solver { getStart  = start
+           , getGoal   = goal
+           , heuristic = heur
+           , expand    = expander keyset grid
+           }
 
-expan :: Cost -> Coord -> Identity [(Coord, Cost)]
-expan cost (Coord row col) =
-    pure [ (Coord (row + 1) col, Cost 1)
-         , (Coord (row - 1) col, Cost 1)
-         , (Coord row (col + 1), Cost 1)
-         , (Coord row (col - 1), Cost 1)
-         ] -- TODO
+newtype KeySet =
+    KeySet (Set Char)
+
+expander :: KeySet -> Grid Char -> Cost -> Coord -> Identity [(Coord, Cost)]
+expander (KeySet ks) grid cost (Coord r c) =
+
+    pure . map (\co -> (co, cost <> Cost 1))
+         . filter (\co -> iskey co || haveKey co)
+         . filter inBounds
+         $ [ Coord (r + 1) c
+           , Coord (r - 1) c
+           , Coord r (c + 1)
+           , Coord r (c - 1)
+           ]
+
+    where
+    inBounds (Coord row col) =
+        row < V.length grid && 
+        col < V.length (grid ! row)
+
+    iskey (Coord row col) =
+        isLower (grid ! row ! col)
+
+    haveKey (Coord row col) =
+        toLower (grid ! row ! col) `S.member` ks
+
+-- TODO - don't run on permutations of dests. tree-style should suffice
+
+go :: Cost -> KeySet -> Grid Char -> Start Coord -> [Char] -> Identity Cost
+go cost                _    _     _       [] = pure cost
+go cost ks@(KeySet keys) grid start (d:ests) = do
+    
+    let d' = findInGrid (==d) grid -- TODO move this out
+
+    mPath <- astar (solver ks grid start (Goal d'))
+
+    case mPath of
+        Nothing -> pure Forbidden
+        Just path -> let cost' = Cost $ length path - 1
+                     in go (cost <> cost') (KeySet $ S.insert d keys) grid (Start d') ests
 
 main :: IO ()
 main = do
 
-    -- input <- V.fromList . map V.fromList . lines <$> readFile "./day18_input"
+    input <- V.fromList . map V.fromList . lines <$> readFile "./day18_input"
 
     let start = Start $ findInGrid (=='@') input
-        goal  = Goal  $ findInGrid (=='D') input
 
-    --let search = newSearch start (getKeys input)
+    let keys = getKeys input
 
-    --print $ go search input $ start
+    let solns = minimum 
+              . map (go (Cost 0) (KeySet (S.fromList "@.")) input start) 
+              $ permutations keys
 
-    let x = astar (solver start goal)
-
-    print x
+    print solns
 
     pure ()
 
@@ -95,81 +118,9 @@ findInGrid p grid =
           $ grid
     in fst $ x ! 0 ! 0
 
-{-
-steps :: Grid Char -> Coord -> [Coord]
-steps grid (Coord row col) =
-    left ++ right ++ up ++ down
-    where
-    left  | col > 0   = [Coord row (col-1)]
-            | otherwise = []
-    right | col < V.length (grid ! 0) - 1 = [Coord row (col+1)]
-            | otherwise = []
-    up    | row > 0   = [Coord (row-1) col]
-            | otherwise = []
-    down  | row < V.length grid - 1 = [Coord (row+1) col]
-            | otherwise = []
-
-isAccessible :: Search -> Grid Char -> Coord -> Bool
-isAccessible search grid coord@(Coord row col) =
-    and [ notVisited
-        , haveKey || isKey ]
-
-    where
-    notVisited = not (S.member coord (visited search))
-
-    haveKey = toLower (grid ! row ! col) `S.member` keys search
-
-    isKey = isLower (grid ! row ! col)
-
-
-newSearch :: Coord -> Set Char -> Search
-newSearch start gridKeys =
-    Search { visited = S.singleton start
-           , keys    = S.fromList "@."
-           , allKeys = S.fromList "@." <> gridKeys
-           , cost    = 0
-           }
-
-getKeys :: Vector (Vector Char) -> Set Char
-getKeys grid = S.fromList
-             . filter isLower
+getKeys :: Vector (Vector Char) -> [Char]
+getKeys grid = filter isLower
              . concat
              . V.toList
              . V.map V.toList
              $ grid
-
-
-
-
-
-
-go :: Search -> Grid Char -> Coord -> Int
-go search grid coord@(Coord row col) = do
-
-    let search' = updateKeys
-                . updateVisited
-                $ search
-
-    if success search'
-        then cost search'
-        else case filter (isAccessible search' grid) . steps grid $ coord of
-            [] -> 100000
-            cs -> let search'' = search' {cost = cost search' + 1}
-                  in minimum . map (go search'' grid) $ cs
-
-    where
-    updateKeys search =
-        let cell = grid ! row ! col
-        in if isLower cell && not (cell `S.member` keys search)
-               then search { keys    = S.insert cell (keys search)
-                           , visited = S.singleton coord
-                           }
-               else search
-
-    updateVisited search =
-        search { visited = S.insert coord (visited search) }
-
-    success search =
-        keys search == allKeys search
-
--}
