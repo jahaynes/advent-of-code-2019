@@ -1,9 +1,9 @@
 import AStar
 
-import           Control.Parallel.Strategies 
-import           Control.Monad.Identity (Identity (Identity))
+import Debug.Trace
+import           Control.Monad.Identity (Identity)
 import           Data.Char              (isLower, toLower)
-import           Data.List              (permutations)
+import           Data.Maybe             (catMaybes)
 import           Data.Set               (Set)
 import qualified Data.Set    as S
 import           Data.Vector            ((!), Vector)
@@ -29,10 +29,12 @@ input :: Grid Char
 input = V.fromList
       . map V.fromList
       $ [ "########################"
-        , "#...............b.C.D.f#"
-        , "#.######################"
-        , "#.....@.a.B.c.d.A.e.F.g#"
+        , "#@..............ac.GI.b#"
+        , "###d#e#f################"
+        , "###A#B#C################"
+        , "###g#h#i################"
         , "########################" ]
+
 
 heur :: Coord -> Goal Coord -> Cost
 heur (Coord x1 y1) (Goal (Coord x2 y2)) =
@@ -72,37 +74,33 @@ expander (KeySet ks) grid cost (Coord r c) =
     haveKey (Coord row col) =
         toLower (grid ! row ! col) `S.member` ks
 
--- TODO - don't run on permutations of dests. tree-style should suffice
+go :: Cost -> Grid Char -> Start Coord -> KeySet -> [(Char, Coord)] -> Identity Cost
+go Forbidden _     _                _  _ = pure Forbidden
+go cost      _     _                _ [] = trace (show cost) $ pure cost
+go cost   grid start keys@(KeySet ks) xs = do
 
-go :: Cost -> KeySet -> Grid Char -> Start Coord -> [Char] -> Identity Cost
-go cost                _    _     _       [] = pure cost
-go cost ks@(KeySet keys) grid start (d:ests) = do
-    
-    let d' = findInGrid (==d) grid -- TODO move this out
+    paths <- catMaybes <$> mapM (\(x, xc) -> do       
+        mPath <- astar (solver keys grid start (Goal xc))
+        pure $ case mPath of
+                   Nothing   -> Nothing
+                   Just path -> Just (x, last path, Cost $ length path - 1)
+        ) xs
 
-    mPath <- astar (solver ks grid start (Goal d'))
+    soln <- mapM (\(c, sc, cost') -> do
+        let xs'   = filter (\(x,_) -> x /= c) xs
+            keys' = KeySet (S.insert c ks)
+        go (cost <> cost') grid (Start sc) keys' xs'
+        ) paths
 
-    case mPath of
-        Nothing -> pure Forbidden
-        Just path -> let cost' = Cost $ length path - 1
-                     in go (cost <> cost') (KeySet $ S.insert d keys) grid (Start d') ests
+    pure . minimum $ soln
 
 main :: IO ()
 main = do
-
-    input <- V.fromList . map V.fromList . lines <$> readFile "./day18_input"
-
+    -- input <- V.fromList . map V.fromList . lines <$> readFile "./day18_input"
     let start = Start $ findInGrid (=='@') input
-
-    let keys = getKeys input
-
-    let solns = minimum 
-              . map (go (Cost 0) (KeySet (S.fromList "@.")) input start) 
-              $ permutations keys
-
-    print solns
-
-    pure ()
+        keys = getKeys input
+        keyCoords = map (\k -> findInGrid (==k) input) keys 
+    print $ go mempty input start (KeySet (S.fromList "@.")) (zip keys keyCoords)
 
 coordinateGrid :: Vector (Vector a) -> Vector (Vector (Coord, a))
 coordinateGrid =
